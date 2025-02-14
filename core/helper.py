@@ -11,26 +11,37 @@ def forward(computational_graph):
     return values[-1]
 
 def backward(computational_graph):
-    values = []
-    grads = [None] * len(computational_graph)  # Initialize grads as a list to hold arrays of gradients
-    for i, item in enumerate(computational_graph):
-        input_values = [values[i] for i in item[1]]
-        value, grad_fn = item[2](*input_values)
-        computational_graph[i][3] = grad_fn
-        values.append(value)
-    grads[-1] = np.ones_like(values[-1], dtype=np.float32)  # Gradient of the loss with respect to itself is 1
-    for i in range(len(computational_graph)):
-        op, inputs, _, grad_fn = computational_graph[len(computational_graph)-i-1]
-        grad_output = grads[len(computational_graph)-i-1]
-        if grad_fn is None:
-            continue
-        grad_inputs = grad_fn(grad_output)
-        for j, grad in zip(inputs, grad_inputs):
-            if grads[j] is None:
-                grads[j] = grad
-            else:
-                grads[j] = grads[j] + grad
-    return grads
+    # Run a forward pass to compute outputs and store each node’s grad function.
+    values = [None] * len(computational_graph)
+    for i, node in enumerate(computational_graph):
+        input_vals = [values[j] for j in node[1]]
+        value, grad_fn = node[2](*input_vals)
+        computational_graph[i][3] = grad_fn  # Save grad function
+        values[i] = value
+    memo = {}
+    processed = set()
+
+    def recursive_backward(idx, grad):
+        if idx in memo:
+            memo[idx] += grad
+        else:
+            memo[idx] = grad
+
+        grad_fn = computational_graph[idx][3]
+        if grad_fn is None or idx in processed:
+            return
+        grad_inputs = grad_fn(memo[idx])
+        processed.add(idx)
+        for input_idx, grad_input in zip(computational_graph[idx][1], grad_inputs):
+            recursive_backward(input_idx, grad_input)
+
+    # Start the recursion at the output (assumed to be the last node) with a gradient of ones.
+    recursive_backward(len(computational_graph) - 1, 
+                       np.ones_like(values[-1], dtype=np.float32))
+
+    # Return gradients in the order of nodes in the computational graph.
+    return [memo[i] if i in memo else None for i in range(len(computational_graph))]
+
 
 def gradient_step(computational_graph, learning_rate, gradient):
     """SGD update rule"""
